@@ -199,6 +199,11 @@ FRGLSessionHandle FRGLBackendImpl::CreateSession(const FRGLSessionConfig& Config
     // 3. Raytrace node
     RGL_CHECK_RETURN(rgl_node_raytrace(&Session->RaytraceNode, Scene), nullptr);
     RGL_CHECK(rgl_node_raytrace_configure_non_hits(Session->RaytraceNode, 0.0f, MaxRangeM));
+    if (Desc.RglIgnoreSelf)
+    {
+        // Rays pass through the vehicle this sensor is mounted on (see FRGLSceneManager::SelfIgnoringSensorId).
+        RGL_CHECK(rgl_node_raytrace_configure_id(Session->RaytraceNode, FRGLSceneManager::SelfIgnoringSensorId));
+    }
 
     // 4. Compact node
     RGL_CHECK_RETURN(rgl_node_points_compact_by_field(&Session->CompactNode, RGL_FIELD_IS_HIT_I32), nullptr);
@@ -931,7 +936,8 @@ FRGLTickResult FRGLBackendImpl::Tick(
     float EffectiveDelta,
     float& InOutHorizontalAngle,
     bool bNeedResults,
-    bool bNeedWorldPoints)
+    bool bNeedWorldPoints,
+    const AActor* SelfActor)
 {
     FRGLTickResult Result;
 
@@ -962,7 +968,9 @@ FRGLTickResult FRGLBackendImpl::Tick(
             static_cast<const void*>(Session),
             SensorWorldTransform.GetLocation(),
             RegistrationDistanceCm,
-            SimulationTime);
+            SimulationTime,
+            SelfActor,
+            Desc.RglIgnoreSelf);
         SceneMgr.Update(World, SimulationTime);
     }
 

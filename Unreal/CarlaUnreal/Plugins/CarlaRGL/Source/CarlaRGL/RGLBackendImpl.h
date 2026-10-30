@@ -90,7 +90,8 @@ public:
         float EffectiveDelta,
         float& InOutHorizontalAngle,
         bool bNeedResults,
-        bool bNeedWorldPoints) override;
+        bool bNeedWorldPoints,
+        const AActor* SelfActor = nullptr) override;
 
 private:
     double SimulationTime = -1.0;  // Elapsed since episode start; -1 = not set
@@ -126,7 +127,8 @@ public:
         float /*EffectiveDelta*/,
         float& /*InOutHorizontalAngle*/,
         bool /*bNeedResults*/,
-        bool /*bNeedWorldPoints*/) override
+        bool /*bNeedWorldPoints*/,
+        const AActor* /*SelfActor*/ = nullptr) override
     {
         return FRGLTickResult();
     }

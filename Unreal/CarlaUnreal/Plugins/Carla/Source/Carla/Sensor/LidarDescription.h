@@ -176,6 +176,10 @@ struct CARLA_API FLidarDescription
   /// Toggle for UDP publishing. Combined with non-empty UdpDestIp.
   bool UdpEnabled = false;
 
+  /// RGL: rays pass through the vehicle this LiDAR is mounted on (attribute rgl_ignore_self).
+  /// For sensors whose mount sits inside the vehicle mesh; other sensors still hit the vehicle.
+  bool RglIgnoreSelf = false;
+
   /// Source IP address for UDP packets (default "0.0.0.0").
   FString UdpSourceIp;
 

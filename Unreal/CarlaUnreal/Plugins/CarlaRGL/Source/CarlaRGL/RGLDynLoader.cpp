@@ -165,6 +165,12 @@ static fn_rgl_mesh_set_restposes_t fn_rgl_mesh_set_restposes = nullptr;
 // 33. rgl_entity_set_pose_world
 typedef rgl_status_t (*fn_rgl_entity_set_pose_world_t)(rgl_entity_t, const rgl_mat3x4f*, int32_t);
 static fn_rgl_entity_set_pose_world_t fn_rgl_entity_set_pose_world = nullptr;
+// 34. rgl_node_raytrace_configure_id
+typedef rgl_status_t (*fn_rgl_node_raytrace_configure_id_t)(rgl_node_t, int32_t);
+static fn_rgl_node_raytrace_configure_id_t fn_rgl_node_raytrace_configure_id = nullptr;
+// 35. rgl_entity_set_ignored_by_sensor
+typedef rgl_status_t (*fn_rgl_entity_set_ignored_by_sensor_t)(rgl_entity_t, int32_t);
+static fn_rgl_entity_set_ignored_by_sensor_t fn_rgl_entity_set_ignored_by_sensor = nullptr;
 
 // ---------------------------------------------------------------------------
 // Wrapper function definitions
@@ -432,6 +438,18 @@ rgl_status_t rgl_entity_set_pose_world(rgl_entity_t entity, const rgl_mat3x4f* p
     if (!fn_rgl_entity_set_pose_world) return RGL_INVALID_STATE;
     return fn_rgl_entity_set_pose_world(entity, pose, bones_count);
 }
+// 34. rgl_node_raytrace_configure_id
+rgl_status_t rgl_node_raytrace_configure_id(rgl_node_t node, int32_t id)
+{
+    if (!fn_rgl_node_raytrace_configure_id) return RGL_INVALID_STATE;
+    return fn_rgl_node_raytrace_configure_id(node, id);
+}
+// 35. rgl_entity_set_ignored_by_sensor
+rgl_status_t rgl_entity_set_ignored_by_sensor(rgl_entity_t entity, int32_t sensor_id)
+{
+    if (!fn_rgl_entity_set_ignored_by_sensor) return RGL_INVALID_STATE;
+    return fn_rgl_entity_set_ignored_by_sensor(entity, sensor_id);
+}
 
 // ---------------------------------------------------------------------------
 // RGLDynLoader implementation
@@ -491,6 +509,8 @@ bool RGLDynLoader::Load(const char* LibPath)
     LOAD_FN(rgl_mesh_set_bone_weights)
     LOAD_FN(rgl_mesh_set_restposes)
     LOAD_FN(rgl_entity_set_pose_world)
+    LOAD_FN(rgl_node_raytrace_configure_id)
+    LOAD_FN(rgl_entity_set_ignored_by_sensor)
 
     if (!allResolved)
     {
@@ -545,6 +565,8 @@ void RGLDynLoader::Unload()
     fn_rgl_mesh_set_bone_weights = nullptr;
     fn_rgl_mesh_set_restposes = nullptr;
     fn_rgl_entity_set_pose_world = nullptr;
+    fn_rgl_node_raytrace_configure_id = nullptr;
+    fn_rgl_entity_set_ignored_by_sensor = nullptr;
 }
 
 bool RGLDynLoader::IsLoaded()

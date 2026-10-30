@@ -2,6 +2,8 @@
 #include "CoreMinimal.h"
 #include "Carla/Sensor/LidarDescription.h"
 
+class AActor;
+
 using FRGLSessionHandle = void*;
 
 struct FRGLSessionConfig
@@ -40,7 +42,8 @@ public:
         float EffectiveDelta,
         float& InOutHorizontalAngle,
         bool bNeedResults,
-        bool bNeedWorldPoints) = 0;
+        bool bNeedWorldPoints,
+        const AActor* SelfActor = nullptr) = 0;   // vehicle the sensor is mounted on; its skeletal mesh is not raytraced
 };
 
 class CARLA_API FRGLBackendRegistry

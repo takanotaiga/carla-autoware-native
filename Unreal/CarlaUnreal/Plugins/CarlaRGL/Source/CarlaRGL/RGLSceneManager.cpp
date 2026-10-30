@@ -1855,11 +1855,26 @@ void FRGLSceneManager::UpdateSkeletalPoses()
             rgl_entity_t E = nullptr;
             if (rgl_entity_create(&E, Scene, *M) != RGL_SUCCESS || !E) { WarnSkeletalOnce(Comp, Info.SkeletalMesh, TEXT("rgl_entity_create failed; pending")); continue; }
             Info.Entity = E;   // identity transform; world-space poses follow. Never call rgl_entity_set_transform.
+            Info.bIgnoredBySelfSensors = false;
         }
         if (rgl_entity_set_pose_world(Info.Entity, Info.PoseScratch.GetData(), Info.RawBoneNum) != RGL_SUCCESS)
         {
             RglDestroyChecked(rgl_entity_destroy(Info.Entity), TEXT("rgl_entity_destroy")); Info.Entity = nullptr;
             WarnSkeletalOnce(Comp, Info.SkeletalMesh, TEXT("rgl_entity_set_pose_world failed; pending"));
+            continue;
+        }
+        // The vehicle a self-ignoring LiDAR is mounted on stays in the scene for every other sensor,
+        // but rays of those LiDARs pass through it (sensors sitting inside the body shell see out).
+        // Applied after the pose: the entity must be animated before its SBT record is rebuilt.
+        bool bIgnore = false;
+        for (const auto& S : RegisteredSensors)
+            if (S.Value.bIgnoreSelf && S.Value.SelfActor.Get() == Comp->GetOwner()) { bIgnore = true; break; }
+        if (bIgnore != Info.bIgnoredBySelfSensors &&
+            rgl_entity_set_ignored_by_sensor(Info.Entity, bIgnore ? SelfIgnoringSensorId : RGL_SENSOR_ID_NONE) == RGL_SUCCESS)
+        {
+            Info.bIgnoredBySelfSensors = bIgnore;
+            UE_LOG(LogCarlaRGL, Log, TEXT("RGLSceneManager[skeletal] %s ignored by self-ignoring sensors: %d"),
+                   *Comp->GetOwner()->GetName(), bIgnore ? 1 : 0);
         }
     }
     for (USkeletalMeshComponent* K : ToRemove) UnregisterSkeletalComponent(K);

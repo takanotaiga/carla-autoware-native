@@ -270,13 +270,19 @@ void ARGLLidar::SimulateLidar(float DeltaSeconds)
 
     const bool bNeedResults = AreClientsListening() || bRglShowLidarPoints;
 
+    // Vehicle this LiDAR is mounted on (attachment root); the backend keeps its skeletal mesh
+    // out of the raytrace so the sensor does not see its own body.
+    const AActor* SelfActor = GetAttachParentActor();
+    while (SelfActor && SelfActor->GetAttachParentActor()) SelfActor = SelfActor->GetAttachParentActor();
+
     FRGLTickResult Result = Backend->Tick(
         RGLSessionHandle,
         GetActorTransform(),
         DeltaSeconds,
         CurrentHorizontalAngle,
         bNeedResults,
-        bRglShowLidarPoints);
+        bRglShowLidarPoints,
+        SelfActor);
 
     if (!bNeedResults || Result.TotalHits <= 0) return;
 

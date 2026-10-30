@@ -1051,6 +1051,14 @@ void UActorBlueprintFunctionLibrary::MakeLidarDefinition(
     RglLidarModelName.RecommendedValues = { TEXT("") };
     RglLidarModelName.bRestrictToRecommended = false;
 
+    // RGL: rays pass through the vehicle this LiDAR is mounted on (for sensors whose mount sits
+    // inside the vehicle mesh); other sensors keep hitting it.
+    FActorVariation RglIgnoreSelf;
+    RglIgnoreSelf.Id = TEXT("rgl_ignore_self");
+    RglIgnoreSelf.Type = EActorAttributeType::Bool;
+    RglIgnoreSelf.RecommendedValues = { TEXT("false") };
+    RglIgnoreSelf.bRestrictToRecommended = false;
+
     FActorVariation RglUdpEnabled;
     RglUdpEnabled.Id = TEXT("rgl_udp_enabled");
     RglUdpEnabled.Type = EActorAttributeType::Bool;
@@ -1141,6 +1149,7 @@ void UActorBlueprintFunctionLibrary::MakeLidarDefinition(
       ReturnMode,
       HorizontalStartAngle,
       RglLidarModelName,
+      RglIgnoreSelf,
       RglUdpEnabled,
       RglUdpSourceIp,
       RglUdpDestIp,
@@ -2046,6 +2055,8 @@ void UActorBlueprintFunctionLibrary::SetLidar(
       "rgl_lidar_model_name", Description.Variations, TEXT(""));
   Lidar.UdpEnabled = RetrieveActorAttributeToBool(
       "rgl_udp_enabled", Description.Variations, false);
+  Lidar.RglIgnoreSelf = RetrieveActorAttributeToBool(
+      "rgl_ignore_self", Description.Variations, false);
   Lidar.UdpSourceIp = RetrieveActorAttributeToString(
       "rgl_udp_source_ip", Description.Variations, TEXT("0.0.0.0"));
   Lidar.UdpDestIp = RetrieveActorAttributeToString(

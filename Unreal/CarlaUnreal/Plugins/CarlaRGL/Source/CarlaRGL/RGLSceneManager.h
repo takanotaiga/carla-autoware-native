@@ -68,13 +68,24 @@ public:
     /// Register or refresh a sensor's culling sphere. Call each tick before Update().
     /// SensorId must be stable for the sensor's lifetime (use the session handle).
     /// Now = current simulation time (seconds), used for stale-sensor eviction.
-    void RegisterSensor(const void* SensorId, const FVector& Position, float DistanceCm, double Now)
+    /// SelfActor = actor the sensor is mounted on. bIgnoreSelf = the sensor's rays pass through
+    /// SelfActor's skeletal meshes (rgl_entity_set_ignored_by_sensor with SelfIgnoringSensorId);
+    /// sensors without it still hit their own vehicle.
+    void RegisterSensor(const void* SensorId, const FVector& Position, float DistanceCm, double Now,
+                        const AActor* SelfActor = nullptr, bool bIgnoreSelf = false)
     {
         FSensorRegistration& S = RegisteredSensors.FindOrAdd(SensorId);
         S.Position = Position;
         S.RegistrationDistanceCm = FMath::Max(5000.0f, DistanceCm);
         S.LastUpdateTime = Now;
+        S.SelfActor = SelfActor;
+        S.bIgnoreSelf = bIgnoreSelf;
     }
+
+    /// RGL sensor id shared by every self-ignoring LiDAR (rgl_node_raytrace_configure_id). An RGL
+    /// entity holds a single ignoring sensor id, so all such sensors use the same one; it only ever
+    /// marks the vehicle each of them is mounted on.
+    static constexpr int32 SelfIgnoringSensorId = 1;
 
     /// Set the world sync interval in simulation seconds. Default: 1.0s. Minimum: 0.1s.
     void SetSyncInterval(float Seconds) { SyncIntervalSeconds = FMath::Max(0.1f, Seconds); }
@@ -157,6 +168,7 @@ private:
         EVisibilityBasedAnimTickOption         SavedTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
         bool                                   bSavedURO = true;
         bool                                   bTickPolicyApplied = false;
+        bool                                   bIgnoredBySelfSensors = false;   // state last applied to Entity
     };
     struct FSkeletalMeshKey
     {
@@ -246,6 +258,8 @@ private:
         FVector LastSyncPosition = FVector::ZeroVector;
         bool    bLastSyncValid = false;
         double  LastUpdateTime = 0.0;              // sim time of last RegisterSensor()
+        TWeakObjectPtr<const AActor> SelfActor;    // vehicle the sensor is mounted on (may be null)
+        bool    bIgnoreSelf = false;               // rays pass through SelfActor's skeletal meshes
     };
     /// Key = sensor id (session handle). Pointer key uses pointer hashing.
     TMap<const void*, FSensorRegistration> RegisteredSensors;
