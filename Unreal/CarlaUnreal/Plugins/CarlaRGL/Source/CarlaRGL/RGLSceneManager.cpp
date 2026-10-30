@@ -21,6 +21,7 @@
 #include "GameFramework/Pawn.h"
 #include "HAL/IConsoleManager.h"
 #include "Misc/CommandLine.h"
+#include "Misc/PackageName.h"
 #include "Misc/Parse.h"
 #include "Rendering/PositionVertexBuffer.h"
 #include "StaticMeshResources.h"
@@ -61,6 +62,9 @@ static TAutoConsoleVariable<int32> CVarRGLSkeletalMaxEntities(TEXT("rgl.Skeletal
          "so a 350k-vertex LOD0 vehicle costs ~8 MB; lower this (or raise MinLOD) on VRAM-tight setups."), ECVF_Default);
 static TAutoConsoleVariable<int32> CVarRGLSkeletalMinLOD(TEXT("rgl.SkeletalMesh.MinLOD"), 0,
     TEXT("Lowest LOD index the extractor may use; raise to trade fidelity for VRAM/skinning cost."), ECVF_Default);
+static TAutoConsoleVariable<int32> CVarRGLSkeletalProxy(TEXT("rgl.SkeletalMesh.Proxy"), 1,
+    TEXT("Trace a static mesh <SkeletalMesh>_RGLProxy (same folder, skeletal component space) instead of the skinned "
+         "mesh when one exists. It is posed rigidly by the component transform. Applies at registration."), ECVF_Default);
 #if !UE_BUILD_SHIPPING
 static TAutoConsoleVariable<int32> CVarRGLSkeletalDebugForceApiUnavailable(TEXT("rgl.SkeletalMesh.Debug.ForceApiUnavailable"), 0,
     TEXT("Test only: pretend the RGL skeleton API did not resolve."), ECVF_Default);
@@ -103,6 +107,11 @@ static void ApplySkeletalCommandLineOverrides()
     {
         CVarRGLSkeletalMinLOD->Set(V, ECVF_SetByCommandline);
         UE_LOG(LogCarlaRGL, Warning, TEXT("RGLSceneManager[skeletal] command line: MinLOD=%d"), V);
+    }
+    if (FParse::Value(FCommandLine::Get(), TEXT("-rgl-skeletal-mesh-proxy="), V))
+    {
+        CVarRGLSkeletalProxy->Set(V, ECVF_SetByCommandline);
+        UE_LOG(LogCarlaRGL, Warning, TEXT("RGLSceneManager[skeletal] command line: Proxy=%d"), V);
     }
 }
 
@@ -1705,8 +1714,28 @@ bool FRGLSceneManager::ShouldRegisterSkeletalComponent(USkeletalMeshComponent* C
     // Permanently skipped after a non-recoverable extraction/upload failure (spec §6.1);
     // hard disqualifier, so no hysteresis and no repeated extraction attempts.
     if (SkeletalSkipped.Contains(FSkeletalSkipKey(FObjectKey(Comp), FObjectKey(Comp->GetSkeletalMeshAsset())))) return false;
+    if (FindSkeletalProxy(Comp->GetSkeletalMeshAsset())) return true;   // traced as its static proxy; no skeletal LOD needed
     if (RGLSkeletal::SelectReadableLOD(Comp->GetSkeletalMeshAsset(), OutReason, CVarRGLSkeletalMinLOD.GetValueOnGameThread()) < 0) { bRetryLater = true; return false; }
     return true;
+}
+
+UStaticMesh* FRGLSceneManager::FindSkeletalProxy(USkeletalMesh* Mesh) const
+{
+    if (!Mesh || CVarRGLSkeletalProxy.GetValueOnGameThread() == 0) return nullptr;
+    if (const TStrongObjectPtr<UStaticMesh>* Cached = SkeletalProxyCache.Find(Mesh)) return Cached->Get();
+    // Convention: <folder>/<SkeletalMesh>_RGLProxy, authored in the skeletal component's space. Lets a vehicle
+    // whose visual body differs from the real one (e.g. sensor mounts ending up inside it) be traced with the
+    // real body shape. Looked up once per asset; a missing proxy is cached as null.
+    const FString Name = Mesh->GetName() + TEXT("_RGLProxy");
+    const FString Path = FPackageName::GetLongPackagePath(Mesh->GetPackage()->GetName()) / Name + TEXT(".") + Name;
+    UStaticMesh* Proxy = LoadObject<UStaticMesh>(nullptr, *Path, nullptr, LOAD_NoWarn | LOAD_Quiet);
+    SkeletalProxyCache.Add(Mesh, TStrongObjectPtr<UStaticMesh>(Proxy));
+    if (Proxy)
+    {
+        UE_LOG(LogCarlaRGL, Log, TEXT("RGLSceneManager[skeletal] %s is traced as its static proxy %s"), *Mesh->GetName(), *Path);
+        fprintf(stderr, "CarlaRGL[skeletal]: %s traced as static proxy %s\n", TCHAR_TO_UTF8(*Mesh->GetName()), TCHAR_TO_UTF8(*Path));
+    }
+    return Proxy;
 }
 
 rgl_mesh_t FRGLSceneManager::GetOrUploadSkeletalMesh(USkeletalMesh* Mesh, int32& OutLOD, int32& OutRawBoneNum, FString& OutReason)
@@ -1784,6 +1813,15 @@ bool FRGLSceneManager::RegisterSkeletalComponent(USkeletalMeshComponent* Comp)
 {
     if (!IsValid(Comp) || SkeletalEntityMap.Contains(Comp)) return false;
     USkeletalMesh* Mesh = Comp->GetSkeletalMeshAsset();
+    if (UStaticMesh* Proxy = FindSkeletalProxy(Mesh))
+    {
+        if (!UploadMesh(Proxy)) { WarnSkeletalOnce(Comp, Mesh, TEXT("static proxy upload failed; skipped")); return false; }
+        AddMeshReference(Proxy);
+        FSkeletalEntityInfo Info;
+        Info.Component = Comp; Info.SkeletalMesh = Mesh; Info.ProxyMesh = Proxy;
+        SkeletalEntityMap.Add(Comp, MoveTemp(Info));   // rigid: no pose, no tick policy
+        return true;
+    }
     FString Reason; int32 LOD = -1, RawBoneNum = 0;
     rgl_mesh_t M = GetOrUploadSkeletalMesh(Mesh, LOD, RawBoneNum, Reason);
     if (!M)
@@ -1815,7 +1853,8 @@ void FRGLSceneManager::UnregisterSkeletalComponent(USkeletalMeshComponent* Key)
 {
     FSkeletalEntityInfo* Info = SkeletalEntityMap.Find(Key); if (!Info) return;
     if (Info->Entity) { RglDestroyChecked(rgl_entity_destroy(Info->Entity), TEXT("rgl_entity_destroy")); Info->Entity = nullptr; }
-    ReleaseSkeletalMeshReference(FSkeletalMeshKey{ Info->SkeletalMesh, Info->LODIndex });
+    if (Info->ProxyMesh) ReleaseMeshReference(Info->ProxyMesh);
+    else ReleaseSkeletalMeshReference(FSkeletalMeshKey{ Info->SkeletalMesh, Info->LODIndex });
     if (USkeletalMeshComponent* Live = Info->Component.Get()) ApplyTickPolicy(Live, *Info, false);   // never through the raw key
     SkeletalEntityMap.Remove(Key);
 }
@@ -1826,7 +1865,7 @@ void FRGLSceneManager::TeardownSkeletal()
     for (USkeletalMeshComponent* K : Keys) UnregisterSkeletalComponent(K);
     for (auto& P : SkeletalMeshCache) if (P.Value) RglDestroyChecked(rgl_mesh_destroy(P.Value), TEXT("rgl_mesh_destroy"));
     SkeletalMeshCache.Empty(); SkeletalMeshRefCounts.Empty();
-    SkeletalSkipped.Empty(); SkeletalWarned.Empty();
+    SkeletalSkipped.Empty(); SkeletalWarned.Empty(); SkeletalProxyCache.Empty();
 }
 
 void FRGLSceneManager::UpdateSkeletalPoses()
@@ -1838,6 +1877,21 @@ void FRGLSceneManager::UpdateSkeletalPoses()
         USkeletalMeshComponent* Comp = Info.Component.Get();
         if (!Comp || !IsValid(Comp) || !Comp->IsRegistered()) { ToRemove.Add(Pair.Key); continue; }
         if (Comp->GetSkeletalMeshAsset() != Info.SkeletalMesh) { ToRemove.Add(Pair.Key); continue; }   // swapped: re-register at next sync
+        if (Info.ProxyMesh)
+        {
+            if (!Info.Entity)
+            {
+                rgl_mesh_t* M = MeshCache.Find(Info.ProxyMesh);
+                if (!M || !*M) { ToRemove.Add(Pair.Key); continue; }
+                if (rgl_entity_create(&Info.Entity, Scene, *M) != RGL_SUCCESS || !Info.Entity)
+                {
+                    Info.Entity = nullptr; WarnSkeletalOnce(Comp, Info.SkeletalMesh, TEXT("rgl_entity_create (proxy) failed; pending")); continue;
+                }
+            }
+            const rgl_mat3x4f Tf = RGLCoord::ToRGL(Comp->GetComponentTransform());
+            RGL_CHECK(rgl_entity_set_transform(Info.Entity, &Tf));
+            continue;
+        }
         bool bPose = RGLSkeletal::BuildWorldPose(Comp, Info.RawBoneNum, Info.PoseScratch);
 #if !UE_BUILD_SHIPPING
         if (CVarRGLSkeletalDebugForcePoseFailure.GetValueOnGameThread() != 0) bPose = false;
@@ -1884,7 +1938,7 @@ void FRGLSceneManager::SyncSkeletalComponents(UWorld* World)
 {
     const bool bTickPolicy = CVarRGLSkeletalAlwaysTickPose.GetValueOnGameThread() != 0;
     const int32 MaxEntities = FMath::Max(0, CVarRGLSkeletalMaxEntities.GetValueOnGameThread());
-    for (auto& Pair : SkeletalEntityMap) if (USkeletalMeshComponent* Live = Pair.Value.Component.Get()) ApplyTickPolicy(Live, Pair.Value, bTickPolicy);
+    for (auto& Pair : SkeletalEntityMap) if (USkeletalMeshComponent* Live = Pair.Value.Component.Get(); Live && !Pair.Value.ProxyMesh) ApplyTickPolicy(Live, Pair.Value, bTickPolicy);
 
     // 1) Evaluate every skeletal component: eligible set (with distance), hard-disqualified set, retry set.
     struct FCand { USkeletalMeshComponent* Comp; float DistSq; };

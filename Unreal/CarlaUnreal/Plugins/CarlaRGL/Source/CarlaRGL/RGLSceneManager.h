@@ -21,6 +21,7 @@
 #include "CoreMinimal.h"
 #include "UObject/WeakObjectPtrTemplates.h"
 #include "UObject/ObjectKey.h"                 // FObjectKey: generation-aware object identity
+#include "UObject/StrongObjectPtr.h"
 #include "Engine/StaticMesh.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
@@ -169,6 +170,7 @@ private:
         bool                                   bSavedURO = true;
         bool                                   bTickPolicyApplied = false;
         bool                                   bIgnoredBySelfSensors = false;   // state last applied to Entity
+        UStaticMesh*                           ProxyMesh = nullptr;   // non-null: traced as this rigid static mesh (MeshCache)
     };
     struct FSkeletalMeshKey
     {
@@ -190,11 +192,14 @@ private:
     /// reason (spec §6.1: only §3.1 readiness failures are retried). Permanently skipped.
     TSet<FSkeletalSkipKey>                             SkeletalSkipped;
     bool                                               bSkeletalApiAvailable = false;
+    /// Skeletal asset -> its <name>_RGLProxy static mesh (null = none). Strong refs keep proxies loaded.
+    mutable TMap<USkeletalMesh*, TStrongObjectPtr<UStaticMesh>> SkeletalProxyCache;
 
     static void RglDestroyChecked(rgl_status_t Status, const TCHAR* Api);
     bool  SkeletalEnabled() const;
     bool  ShouldRegisterSkeletalComponent(USkeletalMeshComponent* Comp, bool& bOutOfRange, bool& bRetryLater, FString& OutReason) const;
     bool  RegisterSkeletalComponent(USkeletalMeshComponent* Comp);
+    UStaticMesh* FindSkeletalProxy(USkeletalMesh* Mesh) const;
     void  UnregisterSkeletalComponent(USkeletalMeshComponent* Key);
     void  UpdateSkeletalPoses();
     void  SyncSkeletalComponents(UWorld* World);
